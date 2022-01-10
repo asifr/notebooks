@@ -3,7 +3,8 @@
 # Index of Jupyter Notebooks
 
 1. [Physionet 2019 preprocessing](ehr/physionet2019-prepare-data.ipynb)
-2. [Physionet 2012 preprocessing](ehr/physionet2012-prepare-data.ipynb)
+1. [Physionet 2012 preprocessing](ehr/physionet2012-prepare-data.ipynb)
+1. [UCR time series classification data](timeseries/ucr-timeseries-classification-prepare-data.ipynb)
 
 # Setup
 
