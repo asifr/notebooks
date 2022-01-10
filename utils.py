@@ -333,7 +333,7 @@ class CustomJSONEncoder(json.JSONEncoder):
 
 def impute(
     df: pd.DataFrame,
-    method: str = "sample",
+    method: str,
     reference_lower: pd.Series = None,
     reference_upper: pd.Series = None,
     impute_values: pd.Series = None,
@@ -1361,3 +1361,55 @@ def init_spark(appName="MyApp", memory=12):
     spark = SparkSession.builder.master(spark_master).appName(appName).getOrCreate()
     print(spark.sparkContext.uiWebUrl)
     return spark
+
+
+def download_url(url: str, out: PathLike, filename: str=None) -> None:
+    """
+    Download a file from the URL
+
+    Parameters
+    ----------
+    url : PathLike
+    out : PathLike
+        output folder
+    filename : str
+        optional output file or folder name
+    """
+    if not filename:
+        filename = os.path.basename(url)
+    fpath = os.path.join(out, filename)
+    os.makedirs(out, exist_ok=True)
+    try:
+        urllib.request.urlretrieve(url, fpath)
+    except (urllib.error.URLError, IOError) as e:
+        if url[:5] == 'https':
+            url = url.replace('https:', 'http:')
+            urllib.request.urlretrieve(url, fpath)
+
+
+def unzip(file: PathLike, out: PathLike, password: str=None) -> None:
+    """
+    Unarchive a .tar.gz, .tar, or .zip file.
+
+    Parameters
+    ----------
+    file : PathLike
+    out : PathLike
+        output folder
+    """
+    import zipfile
+    import tarfile
+
+    if file.endswith("tar.gz"):
+        tar = tarfile.open(file, "r:gz")
+        tar.extractall(path=out)
+        tar.close()
+    if file.endswith("tar"):
+        tar = tarfile.open(file, "r:")
+        tar.extractall(path=out)
+        tar.close()
+    if file.endswith("zip"):
+        with zipfile.ZipFile(file, 'r') as z:
+            if password is not None:
+                z.setpassword(password)
+            z.extractall(out)
