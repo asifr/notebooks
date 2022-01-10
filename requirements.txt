@@ -1,5 +1,8 @@
 numpy
+pandas
 matplotlib
 seaborn
 pyspark
 findspark
+pyarrow
+polars
