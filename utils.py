@@ -168,7 +168,7 @@ def write(
         else:
             warnings.warn(
                 "Writing metadata on partitioned dataset is not supported by"
-                "PyArrow. There Results in a schema mismatch"
+                "PyArrow. Results in a schema mismatch"
                 "(https://issues.apache.org/jira/browse/ARROW-13269).",
                 RuntimeWarning,
             )
@@ -488,25 +488,8 @@ class DataFrameSummary:
     def calculate_stats(self):
         print("Calculating stats")
         q = [
-            0,
-            1,
-            2.5,
-            5,
-            10,
-            20,
-            25,
-            30,
-            40,
-            50,
-            60,
-            70,
-            75,
-            80,
-            90,
-            95,
-            97.5,
-            99,
-            100,
+            0, 1, 2.5, 5, 10, 20, 25, 30, 40, 50, 
+            60, 70, 75, 80, 90, 95, 97.5, 99, 100
         ]
         n = len(self.columns)
         for i, col in enumerate(self.columns):
@@ -1375,10 +1358,13 @@ def download_url(url: str, out: PathLike, filename: str=None) -> None:
     filename : str
         optional output file or folder name
     """
+    import urllib
+
     if not filename:
         filename = os.path.basename(url)
     fpath = os.path.join(out, filename)
     os.makedirs(out, exist_ok=True)
+
     try:
         urllib.request.urlretrieve(url, fpath)
     except (urllib.error.URLError, IOError) as e:
