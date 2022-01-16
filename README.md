@@ -1,10 +1,12 @@
 <div align="right" style="text-align:right"><i>Asif Rahman<br>2022</i></div>
 
-# Index of Jupyter Notebooks
+# Index
 
 1. [Physionet 2019 preprocessing](ehr/physionet2019-prepare-data.ipynb)
 1. [Physionet 2012 preprocessing](ehr/physionet2012-prepare-data.ipynb)
 1. [UCR time series classification data](timeseries/ucr-timeseries-classification-prepare-data.ipynb)
+1. [Tabular classifier with embeddings](machine-learning/tabular-nn-classifier.py)
+1. [Polars cookbook](data-science/polars-cookbook.ipynb)
 
 # Setup
 
