@@ -304,7 +304,7 @@ def table_index(
 
 
 # ----------------------------------------------------------------------
-# Reading and writing JSON files
+# Reading and writing data
 
 
 def fread(filename):
@@ -341,6 +341,55 @@ class CustomJSONEncoder(json.JSONEncoder):
         if isinstance(obj, (WindowsPath, PosixPath)) or isinstance(obj, PurePath):
             return str(obj)
         return json.JSONEncoder.default(self, obj)
+
+
+def save_pickle(obj, path: PathLike):
+    """
+    Save a Python object as a pickle file.
+
+    Parameters
+    ----------
+    obj : dictionary
+    path : PathLike
+
+    Notes
+    -----
+    This function will make some transformation on the object based on the type
+    before saving it. This is to ensure that data can be loaded back with as few
+    pre-requisite modules as possible (e.g. pandas or dataclasses). For example,
+    pandas dataframes will be converted to a dictionary and dataclasses will 
+    also be converted to a dictionary. You don't need to import pandas or define
+    the dataclass before loading the data.
+
+    - np.ndarray will be saved as a numpy array
+    - pd.DataFrame and pd.Series will be saved as a dictionary
+    - any object with a to_numpy() method will be saved as a numpy array
+    - dataclasses will be saved as a dictionary
+    - torch modules and optimizers will be save the state_dict(), if there is a 
+      cpu() method, it will be called to ensure the state is on the CPU
+    """
+    new_obj = {}
+    for key, value in obj.items():
+        # numpy array
+        if safe_isinstance(value, "numpy.ndarray"):
+            new_obj[key] = value
+        # pandas dataframe
+        elif safe_isinstance(value, "pandas.core.frame.DataFrame") | safe_isinstance(value, "pandas.core.series.Series") | hasattr(obj, "to_dict"):
+            new_obj[key] = value.to_dict()
+        # has a to_numpy method
+        elif hasattr(value, "to_numpy"):
+            new_obj[key] = value.to_numpy()
+        # dataclasses
+        elif hasattr(value, "__dataclass_fields__"):
+            new_obj[key] = value.__dict__
+        # torch model or optimizer
+        elif hasattr(value, "state_dict"):
+            new_obj[key] = value.cpu().state_dict() if hasattr(value, "cpu") else value.state_dict()
+        else:
+            new_obj[key] = value
+
+    with open(path, "wb") as f:
+        pickle.dump(new_obj, f)
 
 
 # ----------------------------------------------------------------------

@@ -153,5 +153,6 @@ cython_debug/
 #.idea/
 
 */data/*
+*/trained_models/*
 philips/
 config.py

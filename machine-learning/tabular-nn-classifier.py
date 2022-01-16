@@ -187,10 +187,31 @@ def train():
     )
 
     for epoch in range(opts.epochs):
-        run_epoch(model, opts, train_loader, optimizer, scheduler, losses, metrics, is_train=True)
-        run_epoch(model, opts, test_loader, optimizer, scheduler, losses, metrics, is_train=False)
-        print(f"Epoch: {epoch} | Train loss: {losses.avg:.4f} | Val metric: {metrics.avg: .4f}")
+        run_epoch(
+            model,
+            opts,
+            train_loader,
+            optimizer,
+            scheduler,
+            losses,
+            metrics,
+            is_train=True,
+        )
+        run_epoch(
+            model,
+            opts,
+            test_loader,
+            optimizer,
+            scheduler,
+            losses,
+            metrics,
+            is_train=False,
+        )
+        print(
+            f"Epoch: {epoch} | Train loss: {losses.avg:.4f} | Val metric: {metrics.avg: .4f}"
+        )
 
+    # predict
     y_preds = []
     for batch in test_loader:
         batch_x, _ = batch
@@ -199,5 +220,17 @@ def train():
     y_preds = torch.cat(y_preds).detach().cpu().numpy().ravel()
 
     from cdsutils.performance import performance
+
     perf = pd.Series(performance(y_test, y_preds))
     perf.round(3)
+
+    # save and reload the model
+    output = {
+        "opts": opts,
+        "model": model,
+        "optimizer": optimizer,
+        "preds": y_preds,
+        "perf": perf,
+    }
+    utils.save_pickle(output, "./trained_models/tabular-embedding-adult-income.pkl")
+    output = utils.pickle.load(open("./trained_models/tabular-embedding-adult-income.pkl", "rb"))
