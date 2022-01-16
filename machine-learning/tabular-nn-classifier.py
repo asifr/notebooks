@@ -11,6 +11,9 @@ missing value indicator token).
 Binning is a common preprocessing step for tabular data and used in XGBoost, 
 LightGBM, EBM, and other machine learning algorithms prior to fitting.
 
+This script demonstrates the binning process, embedding module, and the pytorch
+training loop.
+
 Training loss and validation AUC on the Adult dataset are:
 
 ```
