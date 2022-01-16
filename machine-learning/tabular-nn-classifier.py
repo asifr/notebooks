@@ -44,8 +44,6 @@ spec95_precision         0.759
 """
 
 from typing import Tuple
-import numpy as np
-import polars as pl
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from dataclasses import dataclass
