@@ -1,7 +1,19 @@
-from typing import List, Union, TypeVar, Any, Dict, Optional, cast, Sequence
+from typing import (
+    List,
+    Union,
+    TypeVar,
+    Any,
+    Dict,
+    Optional,
+    cast,
+    Sequence,
+    Callable,
+    Tuple,
+)
 import os
 import io
 import sys
+import math
 import shutil
 import warnings
 from pathlib import Path
@@ -14,6 +26,10 @@ import polars as pl
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pyarrow.dataset as ds
+
+import torch
+from torch.utils.data import Dataset
+from torch.utils.data import DataLoader
 
 T = TypeVar("T")
 PathLike = TypeVar("PathLike", str, Path, None)
@@ -488,8 +504,25 @@ class DataFrameSummary:
     def calculate_stats(self):
         print("Calculating stats")
         q = [
-            0, 1, 2.5, 5, 10, 20, 25, 30, 40, 50, 
-            60, 70, 75, 80, 90, 95, 97.5, 99, 100
+            0,
+            1,
+            2.5,
+            5,
+            10,
+            20,
+            25,
+            30,
+            40,
+            50,
+            60,
+            70,
+            75,
+            80,
+            90,
+            95,
+            97.5,
+            99,
+            100,
         ]
         n = len(self.columns)
         for i, col in enumerate(self.columns):
@@ -790,6 +823,25 @@ def safe_isinstance(obj, class_path_str):
     return False
 
 
+def to_numpy(
+    X: Union[np.ndarray, pl.DataFrame, pd.DataFrame, pa.Table, pl.Series, pd.Series]
+) -> np.ndarray:
+    """
+    Transform an input to a numpy array.
+    """
+    if safe_isinstance(X, "numpy.ndarray"):
+        return X
+    if hasattr(X, "to_numpy"):
+        return X.to_numpy()
+    if safe_isinstance(X, "pandas.core.frame.DataFrame"):
+        return X.values
+    if safe_isinstance(X, "pyarrow.lib.Table"):
+        return table_to_numpy(X)
+    if safe_isinstance(X, "polars.internals.frame.DataFrame"):
+        return X.to_numpy()
+    return X
+
+
 # ----------------------------------------------------------------------
 # Polars utilities
 
@@ -807,6 +859,114 @@ def forward_fill(df, group_col, sort_by=None):
         .collect()
     )
     return dx
+
+
+def create_index(df: pl.DataFrame, var: str) -> Dict[str, pl.Series]:
+    g = df[:, var].groupby(var).groups()
+    return dict(zip(g[var], g.groups))
+
+
+def finite(var: str) -> pl.Expr:
+    return pl.col(var).filter(pl.col(var).is_not_null() & pl.col(var).is_not_nan())
+
+
+def wide2tall(
+    df: pl.DataFrame, value_vars: List[str], id_vars: List[str] = []
+) -> pl.DataFrame:
+    """
+    Returns pl.DataFrame with columns `[variable, value]`
+    """
+    return df.melt(id_vars=id_vars, value_vars=value_vars).filter(
+        pl.col("value").is_not_nan() & pl.col("value").is_not_null()
+    )
+
+
+def calculate_stats_aggs(
+    value_var: List[str],
+    digits=4,
+) -> List[pl.Expr]:
+    value = finite(value_var)
+    aggs = [
+        value.mean().alias("Mean").round(digits),
+        value.min().alias("Min").round(digits),
+        value.max().alias("Max").round(digits),
+    ]
+
+    return aggs
+
+
+def calculate_quantiles_aggs(
+    value_var: List[str], quantiles: List[float] = None
+) -> List[pl.Expr]:
+    if quantiles is None:
+        quantiles = [
+            0,
+            1,
+            2.5,
+            5,
+            10,
+            20,
+            25,
+            30,
+            40,
+            50,
+            60,
+            70,
+            75,
+            80,
+            90,
+            95,
+            97.5,
+            99,
+            100,
+        ]
+
+    value = finite(value_var)
+    aggs = []
+    for q in quantiles:
+        aggs.append(value.quantile(q / 100).alias(f"Q{q}"))
+
+    return aggs
+
+
+def calculate_quantiles(
+    df: pl.DataFrame,
+    group_vars: List[str],
+    value_var: List[str],
+    quantiles: List[float] = None,
+) -> pl.DataFrame:
+    aggs = calculate_quantiles_aggs(group_vars, value_var, quantiles)
+    return df.groupby(group_vars).agg(aggs)
+
+
+def outlier_robust_sigmoidal_transform(
+    X: np.ndarray, medians: np.ndarray, iqr: np.ndarray
+):
+    return 1 / (1 + (np.exp(-(X - medians) / (1.35 * iqr))))
+
+
+def get_row_index(
+    index: Dict[Any, pl.Series], values: List[Any], errors: str = "raise"
+):
+    """
+    Lookup row numbers from an index and a list of values.
+    """
+    inds = []
+    for v in values:
+        if v not in index:
+            if errors == "raise":
+                raise ValueError(f"{v} not in index")
+            elif errors == "ignore":
+                continue
+            else:
+                raise ValueError(f"Unknown error handling: {errors}")
+        else:
+            inds.append(index[v])
+    return pl.concat(inds)
+
+
+def pipe(func: Callable, *args, **kwargs):
+    return func(*args, **kwargs)
 
 
 # ----------------------------------------------------------------------
@@ -1102,7 +1262,7 @@ class CDFTransform:
             Transformed data.
         """
         assert self._quantiles is not None, "Must fit before transforming"
-        X = self._to_numpy(X)
+        X = to_numpy(X)
         assert (
             self._quantiles.shape[1] == X.shape[1]
         ), f"Expected {self._quantiles.shape[1]} features, got {X.shape[1]}"
@@ -1131,7 +1291,7 @@ class CDFTransform:
 
     def digitize(self, X):
         assert self._quantiles is not None, "Must fit before transforming"
-        X = self._to_numpy(X)
+        X = to_numpy(X)
         assert (
             self._quantiles.shape[1] == X.shape[1]
         ), f"Expected {self._quantiles.shape[1]} features, got {X.shape[1]}"
@@ -1150,17 +1310,6 @@ class CDFTransform:
 
     def load(self, path):
         self._quantiles = np.load(path)
-
-    def _to_numpy(self, X):
-        if safe_isinstance(X, "pandas.core.frame.DataFrame"):
-            X = X.values
-        if safe_isinstance(X, "pyarrow.lib.Table"):
-            X = table_to_numpy(X)
-        if safe_isinstance(X, "polars.internals.frame.DataFrame") or hasattr(
-            X, "to_numpy"
-        ):
-            X = X.to_numpy()
-        return X
 
 
 # ----------------------------------------------------------------------
@@ -1197,7 +1346,7 @@ class QuantileBinningTransform:
             The data used to calculate the quantiles.
         """
         self._quantiles = []
-        X = self._to_numpy(X)
+        X = to_numpy(X)
         n_samples, n_features = X.shape
         n_quantiles_ = max(1, min(self.n_quantiles, n_samples))
         references = np.linspace(0, 1, n_quantiles_, endpoint=True) * 100
@@ -1248,7 +1397,7 @@ class QuantileBinningTransform:
             Transformed data.
         """
         assert self._quantiles is not None, "Must fit before transforming"
-        X = self._to_numpy(X)
+        X = to_numpy(X)
         assert (
             len(self._quantiles) == X.shape[1]
         ), f"Expected {len(self._quantiles)} features, got {X.shape[1]}"
@@ -1295,17 +1444,6 @@ class QuantileBinningTransform:
         with open(path, "rb") as f:
             self._quantiles = pickle.load(f)
 
-    def _to_numpy(self, X):
-        if safe_isinstance(X, "pandas.core.frame.DataFrame"):
-            X = X.values
-        if safe_isinstance(X, "pyarrow.lib.Table"):
-            X = table_to_numpy(X)
-        if safe_isinstance(X, "polars.internals.frame.DataFrame") or hasattr(
-            X, "to_numpy"
-        ):
-            X = X.to_numpy()
-        return X
-
 
 def init_spark(appName="MyApp", memory=12):
     """
@@ -1346,7 +1484,7 @@ def init_spark(appName="MyApp", memory=12):
     return spark
 
 
-def download_url(url: str, out: PathLike, filename: str=None) -> None:
+def download_url(url: str, out: PathLike, filename: str = None) -> None:
     """
     Download a file from the URL
 
@@ -1368,12 +1506,12 @@ def download_url(url: str, out: PathLike, filename: str=None) -> None:
     try:
         urllib.request.urlretrieve(url, fpath)
     except (urllib.error.URLError, IOError) as e:
-        if url[:5] == 'https':
-            url = url.replace('https:', 'http:')
+        if url[:5] == "https":
+            url = url.replace("https:", "http:")
             urllib.request.urlretrieve(url, fpath)
 
 
-def unzip(file: PathLike, out: PathLike, password: str=None) -> None:
+def unzip(file: PathLike, out: PathLike, password: str = None) -> None:
     """
     Unarchive a .tar.gz, .tar, or .zip file.
 
@@ -1395,7 +1533,291 @@ def unzip(file: PathLike, out: PathLike, password: str=None) -> None:
         tar.extractall(path=out)
         tar.close()
     if file.endswith("zip"):
-        with zipfile.ZipFile(file, 'r') as z:
+        with zipfile.ZipFile(file, "r") as z:
             if password is not None:
                 z.setpassword(password)
             z.extractall(out)
+
+
+# ------------------------------------------------------------------------------
+# Torch
+
+
+def to_tensor(X, dtype="float", device="cpu"):
+    if dtype == "float":
+        dtype = torch.float
+    elif dtype == "long":
+        dtype = torch.long
+    else:
+        raise ValueError("dtype must be 'float' or 'long'")
+    X = to_numpy(X)
+    return torch.from_numpy(np.asarray(X)).type(dtype).to(device)
+
+
+def count_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
+def squeeze_last_dim(tensor):
+    # (B, D, 1) => (B, D).
+    if len(tensor.shape) == 3 and tensor.shape[-1] == 1:
+        return tensor[..., 0]
+    return tensor
+
+
+def last_timestep(x: torch.Tensor, vlen: torch.Tensor):
+    """Grab the last timestep given a set of signal lengths"""
+    return x.gather(1, (vlen - 1).view(-1, 1)).squeeze(-1)
+
+
+def flatten_by_signal_length(x: torch.Tensor, vlen: torch.Tensor):
+    """Flatten data given a set of signal lengths"""
+    return torch.cat([x[i, :v] for i, v in enumerate(vlen)])
+
+
+def padding_indicators(X: torch.FloatTensor, seqlens: torch.LongTensor):
+    B, _, T = X.size()
+    # padding indicator, 1=non-padding, 0=padding
+    P = torch.arange(T).unsqueeze(0).expand(B, -1)
+    P = (P < seqlens.unsqueeze(-1)).float()
+    return P
+
+
+def create_causal_mask(timesteps):
+    mask = np.triu(np.ones((timesteps, timesteps)), k=1)
+    mask = (torch.from_numpy(mask) == 0).long()
+    return mask
+
+
+def create_variable_length_mask(input_lengths, maxlen):
+    """
+    Create a mask for a set of timeseries.
+    """
+    mask = (torch.arange(maxlen)[None, :] < input_lengths[:, None]).long()
+    return mask
+
+
+def times_to_lags(T):
+    """(N x n_step) matrix of times -> (N x n_step) matrix of lags.
+    First time is assumed to be zero.
+    """
+    assert T.ndim == 2, "T must be an (N x n_step) matrix"
+    return np.c_[np.diff(T, axis=1), np.zeros(T.shape[0])]
+
+
+def save_model(model, file):
+    torch.save({"state_dict": model.state_dict()}, file)
+
+
+def load_model(model, file, device="cpu", strict=False):
+    model.load_state_dict(
+        torch.load(file, map_location=torch.device(device))["state_dict"],
+        strict=strict,
+    )
+
+
+def load_to_cpu(path):
+    model = torch.load(path, map_location=lambda storage, loc: storage)
+    model.cpu()
+    return model
+
+
+def randomly_mask_sequence(L, lm, masking_ratio):
+    """
+    Randomly create a boolean mask of length `L`, consisting of subsequences of
+    average length lm, masking with 0s a `masking_ratio` proportion of the
+    sequence L. The length of masking subsequences and intervals follow a
+    geometric distribution.
+
+    Parameters
+    ----------
+    L : int
+        length of mask and sequence to be masked
+    lm : int
+        average length of masking subsequences (streaks of 0s)
+    masking_ratio : int
+        proportion of L to be masked
+
+    Returns
+    -------
+    m : bool
+        boolean numpy array intended to mask ('drop') with 0s a sequence of
+        length L shape (L,)
+    """
+    keep_mask = np.ones(L, dtype=bool)
+    # probability of each masking sequence stopping. parameter of geometric
+    # distribution.
+    p_m = 1 / lm
+    # probability of each unmasked sequence stopping. parameter of geometric
+    # distribution.
+    p_u = p_m * masking_ratio / (1 - masking_ratio)
+    p = [p_m, p_u]
+    # Start in state 0 with masking_ratio probability
+    # state 0 means masking, 1 means not masking
+    state = int(np.random.rand() > masking_ratio)
+    for i in range(L):
+        # here it happens that state and masking value corresponding to state
+        # are identical
+        keep_mask[i] = state
+        if np.random.rand() < p[state]:
+            state = 1 - state
+    return keep_mask
+
+
+def augment(inputs, missing=None, row_prob: float = 0.75, column_prob: float = 0.75):
+    """
+    Randomly swap values in randomly selected columns. Respects missing values
+    by only swapping observed values.
+
+    Parameters
+    ----------
+    inputs : torch.FloatTensor
+    missing : torch.BoolTensor
+        binary indicator missing elements = True
+    row_prob : float
+        swap a fraction of rows, leaving rest untouched
+    column_prob : float
+        swap a fraction of columns, leaving rest untouched
+
+    Returns
+    -------
+    augmented : torch.FloatTensor
+        augmented tensor after rows and columns have been swapped
+    corrupted : torch.FloatTensor
+        binary indicator tensor where swapped elements = 1
+    """
+    observed = 1 * ~(torch.isnan(inputs) if missing is None else missing)
+    augmented = torch.clone(inputs)
+    corrupted = torch.zeros(inputs.size())
+    B, D = inputs.size()
+    columns = torch.where(1 * (torch.rand(D) < column_prob))[0]
+    for d in columns:
+        corrupt = 1 * (torch.rand(B) < row_prob)
+        corrupted[:, d] = corrupt & observed[:, d]
+        inds = torch.where(corrupted[:, d])[0]
+        shuffled_inds = inds[torch.randperm(inds.size(0))]
+        augmented[inds, d] = inputs[shuffled_inds, d]
+    return augmented, corrupted
+
+
+def adjust_learning_rate(args, optimizer, epoch):
+    lr = args.learning_rate
+    if args.cosine:
+        eta_min = lr * (args.lr_decay_rate ** 3)
+        lr = (
+            eta_min
+            + (lr - eta_min) * (1 + math.cos(math.pi * epoch / args.max_epochs)) / 2
+        )
+    else:
+        steps = np.sum(epoch > np.asarray(args.lr_decay_epochs))
+        if steps > 0:
+            lr = lr * (args.lr_decay_rate ** steps)
+
+    for param_group in optimizer.param_groups:
+        param_group["lr"] = lr
+    return lr
+
+
+def warmup_learning_rate(args, epoch, batch_id, total_batches, optimizer):
+    if args.warm and epoch <= args.warm_epochs:
+        p = (batch_id + (epoch - 1) * total_batches) / (
+            args.warm_epochs * total_batches
+        )
+        lr = args.warmup_from + p * (args.warmup_to - args.warmup_from)
+
+        for param_group in optimizer.param_groups:
+            param_group["lr"] = lr
+
+
+class AverageMeter:
+    """Computes and stores the average and current value"""
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.val = 0
+        self.avg = 0
+        self.sum = 0
+        self.count = 0
+
+    def update(self, val, n=1):
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum / self.count
+
+
+def get_baseline_prediction(y: np.ndarray):
+    proba_positive_class = np.mean(y)
+    eps = np.finfo(np.float64).eps
+    proba_positive_class = np.clip(proba_positive_class, eps, 1 - eps)
+    return np.log(proba_positive_class / (1 - proba_positive_class))
+
+
+# ----------------------------------------------------------------------
+# Dataset and data loader
+
+
+class GenericDataset(Dataset):
+    def __init__(self, inputs: Tuple[Any], dtypes="float", device: str = "cpu"):
+        self.inputs = inputs
+        self.device = device
+        if is_listish(dtypes):
+            self.dtypes = dtypes
+        else:
+            self.dtypes = [dtypes] * (len(inputs) if is_listish(inputs) else 1)
+
+    def __len__(self):
+        if is_listish(self.inputs):
+            return len(self.inputs[0])
+        else:
+            return len(self.inputs)
+
+    def __getitem__(self, idx):
+        if is_listish(self.inputs):
+            return [
+                to_tensor(input[idx], self.dtypes[i], self.device)
+                for i, input in enumerate(self.inputs)
+            ]
+        else:
+            return to_tensor(self.inputs[idx], self.dtypes[0], self.device)
+
+
+def create_generic_dataloader(
+    inputs: Tuple[Any],
+    batch_size=32,
+    shuffle=False,
+    device="cpu",
+    dtypes="float",
+):
+    """
+    Create a generic PyTorch DataLoader.
+
+    Parameters
+    ----------
+    inputs : Tuple[Any]
+        Can be a tuple of numpy arrays, a pytorch dataset, a pandas dataframe,
+        a polars dataframe, or a pyarrow table.
+    batch_size : int, optional
+        by default 32
+    shuffle : bool, optional
+        by default False
+    device : str, optional
+        by default "cpu"
+
+    Returns
+    -------
+    loader : DataLoader
+        PyTorch DataLoader instance
+    """
+    inputs = to_numpy(inputs)
+
+    if is_listish(inputs) | safe_isinstance(inputs, "numpy.ndarray"):
+        inputs = GenericDataset(inputs, dtypes, device)
+
+    return DataLoader(
+        inputs,
+        shuffle=shuffle,
+        batch_size=batch_size,
+    )
