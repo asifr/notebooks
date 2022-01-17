@@ -7,6 +7,7 @@
 1. [UCR time series classification data](timeseries/ucr-timeseries-classification-prepare-data.ipynb)
 1. [Tabular classifier with embeddings](machine-learning/tabular-nn-classifier.py)
 1. [Polars cookbook](data-science/polars-cookbook.ipynb)
+1. [Neural adaptive regression splines](machine-learning/nars.py)
 
 # Setup
 
