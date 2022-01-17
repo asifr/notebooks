@@ -1537,7 +1537,7 @@ def init_spark(appName="MyApp", memory=12):
     findspark.init(os.environ["SPARK_HOME"])
     spark_master = _parse_master(os.environ["PYSPARK_SUBMIT_ARGS"])
 
-    from pyspark.sql import SparkSession
+    from pyspark.sql import SparkSession  # type: ignore
 
     spark = SparkSession.builder.master(spark_master).appName(appName).getOrCreate()
     print(spark.sparkContext.uiWebUrl)
@@ -1613,6 +1613,9 @@ def to_tensor(X, dtype="float", device="cpu"):
     X = to_numpy(X)
     return torch.from_numpy(np.asarray(X)).type(dtype).to(device)
 
+
+def torch_to_numpy(*args):
+    return [x.cpu().detach().numpy() for x in args]
 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -1871,8 +1874,6 @@ def create_generic_dataloader(
     loader : DataLoader
         PyTorch DataLoader instance
     """
-    inputs = to_numpy(inputs)
-
     if is_listish(inputs) | safe_isinstance(inputs, "numpy.ndarray"):
         inputs = GenericDataset(inputs, dtypes, device)
 
