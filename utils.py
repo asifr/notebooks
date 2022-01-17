@@ -349,7 +349,7 @@ def save_pickle(obj, path: PathLike):
 
     Parameters
     ----------
-    obj : dictionary
+    obj : dictionary or dataclass or namedtuple
     path : PathLike
 
     Notes
@@ -365,9 +365,17 @@ def save_pickle(obj, path: PathLike):
     - pd.DataFrame and pd.Series will be saved as a dictionary
     - any object with a to_numpy() method will be saved as a numpy array
     - dataclasses will be saved as a dictionary
+    - namedtuples will be saved as a dictionary
     - torch modules and optimizers will be save the state_dict(), if there is a 
       cpu() method, it will be called to ensure the state is on the CPU
     """
+    # obj is a namedtuple
+    if hasattr(obj, "_asdict"):
+        obj = obj._asdict()
+    # obj is a dataclass
+    if hasattr(obj, "__dataclass_fields__"):
+        obj = obj.__dict__
+
     new_obj = {}
     for key, value in obj.items():
         # numpy array
@@ -382,6 +390,9 @@ def save_pickle(obj, path: PathLike):
         # dataclasses
         elif hasattr(value, "__dataclass_fields__"):
             new_obj[key] = value.__dict__
+        # namedtuples
+        elif hasattr(value, "_asdict"):
+            new_obj[key] = value._asdict()
         # torch model or optimizer
         elif hasattr(value, "state_dict"):
             new_obj[key] = value.cpu().state_dict() if hasattr(value, "cpu") else value.state_dict()
@@ -389,7 +400,7 @@ def save_pickle(obj, path: PathLike):
             new_obj[key] = value
 
     with open(path, "wb") as f:
-        pickle.dump(new_obj, f)
+        pickle.dump(new_obj, f, protocol=pickle.HIGHEST_PROTOCOL)
 
 
 # ----------------------------------------------------------------------

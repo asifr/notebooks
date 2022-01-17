@@ -46,10 +46,12 @@ spec95_precision         0.759
 ```
 """
 
-from typing import Tuple
+from typing import Tuple, List
+import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from dataclasses import dataclass
+from collections import namedtuple
 import importlib
 
 import torch
@@ -141,6 +143,14 @@ def run_epoch(
         scheduler.step(metrics.avg)
 
 
+@dataclass
+class SaveOutput:
+    opts: ClassifierOpts
+    model: nn.Module
+    optimizer: torch.optim.Optimizer
+    quantiles: List[np.ndarray]
+
+
 def train():
     data = datasets.load_adult()
     X_train, X_test, y_train, y_test = train_test_split(
@@ -228,12 +238,12 @@ def train():
     perf.round(3)
 
     # save and reload the model
-    output = {
-        "opts": opts,
-        "model": model,
-        "optimizer": optimizer,
-        "preds": y_preds,
-        "perf": perf,
-    }
+    output = SaveOutput(
+        opts=opts,
+        model=model,
+        optimizer=optimizer,
+        quantiles=quantile_transform._quantiles,
+    )
     utils.save_pickle(output, "./trained_models/tabular-embedding-adult-income.pkl")
     output = utils.pickle.load(open("./trained_models/tabular-embedding-adult-income.pkl", "rb"))
+    output = SaveOutput(**output)
